@@ -32,8 +32,6 @@ python .\Flappy.py
 
 ## Construído com:
 
-Mencione as ferramentas que você usou para criar seu projeto
-
 * [Mosquitto](https://mosquitto.org/download/) - O framework web usado
 * [Pygame](https://www.pygame.org/docs/) - Módulo de videogame
 * [MQTT](https://eclipse.dev/paho/files/paho.mqtt.python/html/client.html) - Protocolo de mensagens
