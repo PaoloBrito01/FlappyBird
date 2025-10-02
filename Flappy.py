@@ -3,6 +3,7 @@ import random
 import os
 import json
 import paho.mqtt.client as mqtt
+import time
 
 pygame.init()
 
@@ -15,8 +16,10 @@ client_id = f'player-{random.randint(0, 100000)}'
 # --- Escolha do jogador local ---
 # Ao iniciar, escolha se este processo será o player 1 (vermelho) ou player 2 (azul).
 # Digite '1' para P1 (vermelho) ou '2' para P2 (azul).
-choice = input("Escolha seu player (1 = vermelho, 2 = azul): ").strip()
-is_player1 = True if choice == '1' else False
+choice = input("Escolha seu player (1 = vermelho, 2 = azul, 3 = plateia/espectador): ").strip()
+is_player1 = (choice == '1')
+is_player2 = (choice == '2') 
+is_spectator = (choice == '3')
 
 # estado remoto armazenado (por cor)
 remote_states = {
@@ -51,7 +54,13 @@ def on_message(client, userdata, msg):
         if color in ('red', 'blue'):
             # grava o estado remoto para ser usado no loop principal (interpolação segura)
             remote_states[color] = data
-
+            
+        if "seed" in data:
+            if not is_player1: # Apenas P2 precisa aplicar o seed do P1
+                seed_value = data["seed"]
+                random.seed(seed_value)
+                print(f"P2 aplicou seed: {seed_value}")
+                
         # sincroniza estado do jogo (se alguém mandar game_over)
         if data.get("game_state") == 'game_over':
             global game_state
@@ -191,6 +200,16 @@ def reset_game():
     pipes2 = []
     spawn_pipe_timer = 0
     game_state = 'playing'
+
+    # Se for P1, gera um seed e envia.
+    if is_player1:
+         # Gera um seed aleatório e inicializa o gerador local
+         seed_value = random.randrange(100000)
+         random.seed(seed_value)
+         # Publica o seed para o P2
+         client.publish(mqtt_topic, json.dumps({"player_id": client_id, "seed": seed_value}))
+         print(f"P1 enviou seed: {seed_value}")
+    # P2 irá receber o seed e aplicá-lo na função on_message
 
 
 def check_out_of_bounds(player1, player2):
