@@ -3,16 +3,31 @@ import random
 import os
 import json
 import paho.mqtt.client as mqtt
-from paho.mqtt.client import CallbackAPIVersion
 
 pygame.init()
 
-# MQTT Setup
+# --- Configurações MQTT ---
 broker = "broker.emqx.io"
 port = 1883
 mqtt_topic = "flappybird2player/game"
 client_id = f'player-{random.randint(0, 100000)}'
-other_player_state = {}
+
+# --- Escolha do jogador local ---
+# Ao iniciar, escolha se este processo será o player 1 (vermelho) ou player 2 (azul).
+# Digite '1' para P1 (vermelho) ou '2' para P2 (azul).
+choice = input("Escolha seu player (1 = vermelho, 2 = azul): ").strip()
+is_player1 = True if choice == '1' else False
+
+# estado remoto armazenado (por cor)
+remote_states = {
+    'red': None,
+    'blue': None
+}
+
+# estado global do jogo
+game_state = 'start_screen'
+
+# Callback MQTT
 
 def on_connect(client, userdata, flags, reasonCode, properties=None):
     if reasonCode == 0:
@@ -21,20 +36,35 @@ def on_connect(client, userdata, flags, reasonCode, properties=None):
     else:
         print(f"Falha de conexão MQTT: {reasonCode}")
 
+
 def on_message(client, userdata, msg):
-    global other_player_state
     try:
         data = json.loads(msg.payload.decode())
-        if data.get("player_id") != client_id:
-            other_player_state = data
+        # debug
+        print("Recebido MQTT:", data)
+
+        # ignora minhas próprias mensagens
+        if data.get("player_id") == client_id:
+            return
+
+        color = data.get("color")
+        if color in ('red', 'blue'):
+            # grava o estado remoto para ser usado no loop principal (interpolação segura)
+            remote_states[color] = data
+
+        # sincroniza estado do jogo (se alguém mandar game_over)
+        if data.get("game_state") == 'game_over':
+            global game_state
+            game_state = 'game_over'
+
     except Exception as e:
         print("Erro processando mensagem MQTT:", e)
 
-# Configurações do jogo
+
+# --- Configurações do jogo ---
 WIDTH, HEIGHT = 1200, 700
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 message_font = pygame.font.Font('SuperMario.ttf', 60) 
-title_font = pygame.font.Font('SuperMario.ttf', 80)  
 text_font = pygame.font.Font('SuperMario.ttf', 40)  
 score_font = pygame.font.Font('SuperMario.ttf', 20)
 
@@ -133,6 +163,7 @@ class Pipe:
             pygame.draw.rect(screen, BLACK, (self.x, 0, self.width, self.y_top_end))
             pygame.draw.rect(screen, BLACK, (self.x, self.y_top_end + PIPE_GAP, self.width, HEIGHT - (self.y_top_end + PIPE_GAP)))
 
+
 def check_collision(bird, pipes):
     if not bird.is_alive:
         return False
@@ -151,6 +182,7 @@ def check_collision(bird, pipes):
             bird.score += 1
     return False
 
+
 def reset_game():
     global pipes1, pipes2, spawn_pipe_timer, game_state
     player1.reset()
@@ -159,6 +191,7 @@ def reset_game():
     pipes2 = []
     spawn_pipe_timer = 0
     game_state = 'playing'
+
 
 def check_out_of_bounds(player1, player2):
     global game_state
@@ -175,17 +208,27 @@ player2 = Bird(100, HEIGHT // 2, bird_img_blue, BLUE)
 pipes1 = []
 pipes2 = []
 spawn_pipe_timer = 0
+
 game_state = 'start_screen'
 
+# Define quem é local e referência convenience
+player_local = player1 if is_player1 else player2
+player_remote = player2 if is_player1 else player1
+local_color = 'red' if is_player1 else 'blue'
+remote_color = 'blue' if is_player1 else 'red'
+
+# Teclas
 jump_keys = {pygame.K_w: player1, pygame.K_UP: player2}
 clock = pygame.time.Clock()
 
 # MQTT Client
-client = mqtt.Client(CallbackAPIVersion.VERSION1, client_id)
+client = mqtt.Client(client_id=client_id, protocol=mqtt.MQTTv311)
 client.on_connect = on_connect
 client.on_message = on_message
 client.connect(broker, port)
 client.loop_start()
+
+print(f"Cliente MQTT id={client_id} | Você é {'P1 (vermelho)' if is_player1 else 'P2 (azul)'}")
 
 while True:
     for event in pygame.event.get():
@@ -197,12 +240,15 @@ while True:
         if game_state in ('start_screen', 'game_over') and event.type == pygame.KEYDOWN:
             reset_game()
         elif game_state == 'playing' and event.type == pygame.KEYDOWN and event.key in jump_keys:
+            # permite controlar seu pássaro usando a tecla correta (W para vermelho, UP para azul)
             jump_keys[event.key].jump()
 
     if game_state == 'playing':
-        player1.move()
+        # movimento local
+        player_local.move()
         check_out_of_bounds(player1, player2)
 
+        # geração e movimento de pipes (mantido igual para os dois jogos)
         spawn_pipe_timer += 1
         if spawn_pipe_timer >= 120:
             pipe_height = random.randint(100, HEIGHT - PIPE_GAP - 100)
@@ -224,32 +270,29 @@ while True:
         if not player1.is_alive and not player2.is_alive:
             game_state = 'game_over'
 
-        # -------- MQTT --------
+        # -------- MQTT: envio do estado local --------
         current_time = pygame.time.get_ticks()
         if current_time - last_mqtt_send > 50:
             my_state = {
                 "player_id": client_id,
-                "bird1_y": player1.y,
-                "bird1_score": player1.score,
-                "bird1_alive": player1.is_alive,
-                "bird2_y": player2.y,
-                "bird2_score": player2.score,
-                "bird2_alive": player2.is_alive,
+                "color": local_color,
+                "y": player_local.y,
+                "score": player_local.score,
+                "alive": player_local.is_alive,
                 "game_state": game_state
             }
             client.publish(mqtt_topic, json.dumps(my_state))
             last_mqtt_send = current_time
 
-        # Atualiza estado do outro jogador
-        if other_player_state:
-            target_y = other_player_state.get("bird2_y", player2.y)
-            player2.y += (target_y - player2.y) * INTERPOLATION_SPEED
-
-            remote_score = other_player_state.get("bird2_score", player2.score)
-            player2.score = remote_score
-
-            player2.is_alive = other_player_state.get("bird2_alive", player2.is_alive)
-            if other_player_state.get("game_state") == 'game_over':
+        # -------- Aplicar estado remoto (interpolação) --------
+        remote = remote_states.get(remote_color)
+        if remote is not None:
+            target_y = remote.get('y', player_remote.y)
+            # interpolação suave
+            player_remote.y += (target_y - player_remote.y) * INTERPOLATION_SPEED
+            player_remote.score = remote.get('score', player_remote.score)
+            player_remote.is_alive = remote.get('alive', player_remote.is_alive)
+            if remote.get('game_state') == 'game_over':
                 game_state = 'game_over'
 
     # ---------- Renderização ----------
