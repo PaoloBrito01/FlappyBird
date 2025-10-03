@@ -18,10 +18,6 @@ Execute os seguintes comandos para instalação das bibliotecas nescessárias
 pip install pygame paho-mqtt
 ```
 
-```
-pip install pygame
-```
-
 ## Executando o programa:
 
 Execute o seguinte comando para iniciar o jogo
