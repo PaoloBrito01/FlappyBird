@@ -2,7 +2,7 @@
 
 Este projeto tem como objetivo desenvolver um esqueleto de jogo distribuído, onde a comunicação entre os jogadores é feita através de um serviço de filas. A proposta é criar um ambiente simples onde dois jogadores podem jogar Flappy Bird simultaneamente, com os movimentos sendo sincronizados em tempo real via MQTT. Além disso, é possível configurar um broker local com o Mosquitto ou utilizar um broker público para testes.
 
-## Comunicação MQTT
+## Comunicação MQTT:
 
 O jogo utiliza tópicos MQTT para transmitir os movimentos e estados dos jogadores.
 
